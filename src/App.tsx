@@ -126,8 +126,8 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [activeMode, setActiveMode] = useState<"backend" | "supabase_direct" | "local_simulation" | "initializing">("initializing");
   const [isDbGuideOpen, setIsDbGuideOpen] = useState<boolean>(false);
-  const [customUrlInput, setCustomUrlInput] = useState<string>(() => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_URL") || "" : "");
-  const [customKeyInput, setCustomKeyInput] = useState<string>(() => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_ANON_KEY") || "" : "");
+  const [customUrlInput, setCustomUrlInput] = useState<string>(() => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_URL") || "https://etmdgqwdkzzugdtomrzd.supabase.co" : "https://etmdgqwdkzzugdtomrzd.supabase.co");
+  const [customKeyInput, setCustomKeyInput] = useState<string>(() => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_ANON_KEY") || "sb_publishable_BmU-oIzD_VQBxHrF-ezSbQ_JCYXNhuY" : "sb_publishable_BmU-oIzD_VQBxHrF-ezSbQ_JCYXNhuY");
 
   // Quick Manual simulator state overrides for easy direct writeback to database
   const [simStage, setSimStage] = useState<string>("Checking Dustbins");

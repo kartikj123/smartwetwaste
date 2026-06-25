@@ -15,8 +15,8 @@ function isValidHttpUrl(str: string): boolean {
 const getLocalUrl = () => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_URL") : null;
 const getLocalKey = () => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_ANON_KEY") : null;
 
-const supabaseUrl = getLocalUrl() || import.meta.env?.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = getLocalKey() || import.meta.env?.VITE_SUPABASE_ANON_KEY || "";
+const supabaseUrl = getLocalUrl() || import.meta.env?.VITE_SUPABASE_URL || "https://etmdgqwdkzzugdtomrzd.supabase.co";
+const supabaseAnonKey = getLocalKey() || import.meta.env?.VITE_SUPABASE_ANON_KEY || "sb_publishable_BmU-oIzD_VQBxHrF-ezSbQ_JCYXNhuY";
 
 // Verify both exist, aren't placeholders, and the URL is structurally valid
 export const isSupabaseConfigured = Boolean(
