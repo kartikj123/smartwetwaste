@@ -1,0 +1,6 @@
+{
+  "name": "Smart Wet Waste Segregation and Liquid Separation System",
+  "description": "An IoT-based wet waste segregation and liquid separation control panel and monitoring system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
