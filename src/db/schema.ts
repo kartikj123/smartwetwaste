@@ -57,12 +57,10 @@ export const alerts = pgTable("alerts", {
 
 // Process logs table
 export const processLogs = pgTable("process_logs", {
-  id: text("id").primaryKey(),
-  timestamp: timestamp("timestamp").notNull().defaultNow(),
-  stage: text("stage").notNull(),
-  action: text("action").notNull(),
-  operator: text("operator").notNull(),
-  details: text("details").notNull(),
+  id: serial("id").primaryKey(),
+  processStage: text("process_stage").notNull(),
+  description: text("description").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Analytics Daily table
@@ -91,3 +89,12 @@ export const analyticsMonthly = pgTable("analytics_monthly", {
   liquid: integer("liquid").notNull().default(0),
   cycles: integer("cycles").notNull().default(0),
 });
+
+// Machine Control table
+export const machineControl = pgTable("machine_control", {
+  id: integer("id").primaryKey().default(1),
+  command: text("command").notNull().default("IDLE"),
+  status: text("status").notNull().default("IDLE"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+

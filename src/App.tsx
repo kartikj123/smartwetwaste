@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import { motion, AnimatePresence } from "motion/react";
+import MachineControlCard from "./components/MachineControlCard";
 import { 
   Activity, 
   Cpu, 
@@ -1360,6 +1361,9 @@ export default function App() {
                   </div>
 
                 </div>
+
+                {/* --- SECTION 1B: MACHINE CONTROL MODULE --- */}
+                <MachineControlCard activeMode={activeMode} />
 
                 {/* --- SECTION 2: BIN MONITORING --- */}
                 <div className="space-y-3">

@@ -64,12 +64,10 @@ export interface Alert {
 }
 
 export interface ProcessLog {
-  id: string;
-  timestamp: string;
-  stage: SystemStage;
-  action: string;
-  operator: string;
-  details: string;
+  id: number;
+  created_at: string;
+  process_stage: string;
+  description: string;
 }
 
 export interface WasteMetrics {
@@ -83,3 +81,26 @@ export interface AnalyticsData {
   weekly: { week: string; large: number; fine: number; liquid: number; cycles: number }[];
   monthly: { month: string; large: number; fine: number; liquid: number; cycles: number }[];
 }
+
+export type MachineCommand = 'IDLE' | 'START' | 'STOP' | 'RESET';
+
+export type MachineStatus =
+  | 'IDLE'
+  | 'RUNNING'
+  | 'WET_DETECTED'
+  | 'DRY_DETECTED'
+  | 'METAL_DETECTED'
+  | 'BIN1_FULL'
+  | 'BIN2_FULL'
+  | 'LIQUID_FULL'
+  | 'PROCESS_COMPLETE'
+  | 'ERROR'
+  | 'STOPPED';
+
+export interface MachineControl {
+  id: number;
+  command: MachineCommand;
+  status: MachineStatus;
+  updated_at?: string;
+}
+

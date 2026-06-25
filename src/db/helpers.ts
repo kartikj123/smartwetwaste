@@ -89,20 +89,14 @@ export async function seedDatabase() {
       console.log("Seeding initial process_logs data...");
       await db.insert(processLogs).values([
         { 
-          id: "log_1", 
-          timestamp: new Date(Date.now() - 7200000), 
-          stage: "Completed", 
-          action: "Cycle Auto Start", 
-          operator: "System Scheduler", 
-          details: "Processed 4.2kg wet waste safely." 
+          processStage: "Completed", 
+          description: "Processed 4.2kg wet waste safely. (Cycle Auto Start by System Scheduler)",
+          createdAt: new Date(Date.now() - 7200000)
         },
         { 
-          id: "log_2", 
-          timestamp: new Date(Date.now() - 3600000), 
-          stage: "Checking Dustbins", 
-          action: "System Diagnostic Check", 
-          operator: "System Admin", 
-          details: "All sensor distances verified inside tolerance boundaries." 
+          processStage: "Checking Dustbins", 
+          description: "All sensor distances verified inside tolerance boundaries. (System Diagnostic Check by System Admin)",
+          createdAt: new Date(Date.now() - 3600000)
         }
       ]);
     }
@@ -159,7 +153,7 @@ export async function getDashboardData() {
     const sensors = await db.select().from(sensorReadings).orderBy(sensorReadings.sensorId);
     const actuator = await db.select().from(actuatorStatus).where(eq(actuatorStatus.id, "current"));
     const activeAlerts = await db.select().from(alerts).orderBy(desc(alerts.timestamp));
-    const logs = await db.select().from(processLogs).orderBy(desc(processLogs.timestamp)).limit(30);
+    const logs = await db.select().from(processLogs).orderBy(desc(processLogs.id)).limit(30);
 
     return {
       bins: bins.map(b => ({
@@ -207,11 +201,9 @@ export async function getDashboardData() {
       })),
       logs: logs.map(l => ({
         id: l.id,
-        timestamp: l.timestamp.toISOString(),
-        stage: l.stage as any,
-        action: l.action,
-        operator: l.operator,
-        details: l.details
+        created_at: l.createdAt?.toISOString() || new Date().toISOString(),
+        process_stage: l.processStage,
+        description: l.description
       }))
     };
   }, "Failed to retrieve dashboard data");
@@ -325,12 +317,9 @@ export async function resolveAlertDb(id: string) {
 export async function insertProcessLogDb(log: ProcessLog) {
   return await queryWrapper(async () => {
     await db.insert(processLogs).values({
-      id: log.id,
-      timestamp: new Date(log.timestamp),
-      stage: log.stage,
-      action: log.action,
-      operator: log.operator,
-      details: log.details
+      processStage: log.process_stage,
+      description: log.description,
+      createdAt: log.created_at ? new Date(log.created_at) : new Date()
     });
   }, "Failed to append process log");
 }

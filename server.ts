@@ -74,8 +74,8 @@ let alerts: Alert[] = [
 ];
 
 let processLogs: ProcessLog[] = [
-  { id: "log_1", timestamp: new Date(Date.now() - 7200000).toISOString(), stage: "Completed", action: "Cycle Auto Start", operator: "System Scheduler", details: "Processed 4.2kg wet waste safely." },
-  { id: "log_2", timestamp: new Date(Date.now() - 3600000).toISOString(), stage: "Checking Dustbins", action: "System Diagnostic Check", operator: "System Admin", details: "All sensor distances verified inside tolerance boundaries." }
+  { id: 1, created_at: new Date(Date.now() - 7200000).toISOString(), process_stage: "Completed", description: "Processed 4.2kg wet waste safely. (Cycle Auto Start by System Scheduler)" },
+  { id: 2, created_at: new Date(Date.now() - 3600000).toISOString(), process_stage: "Checking Dustbins", description: "All sensor distances verified inside tolerance boundaries. (System Diagnostic Check by System Admin)" }
 ];
 
 // Historical Analytics for Recharts
@@ -167,12 +167,10 @@ async function advanceStage() {
     const liquidW = Math.round(3 + Math.random() * 5);
     
     const cycleLog: ProcessLog = {
-      id: "log_" + Date.now(),
-      timestamp: new Date().toISOString(),
-      stage: "Completed",
-      action: "Cycle Completed",
-      operator: sessionUser ? sessionUser.name : "System Auto",
-      details: `Safely segregated: Large: ${largeW}kg, Fine: ${fineW}kg, Liquid: ${liquidW}L.`
+      id: Math.floor(Math.random() * 1000000),
+      created_at: new Date().toISOString(),
+      process_stage: "Completed",
+      description: `Safely segregated: Large: ${largeW}kg, Fine: ${fineW}kg, Liquid: ${liquidW}L. Operator: ${sessionUser ? sessionUser.name : "System Auto"}`
     };
     processLogs.unshift(cycleLog);
 
@@ -293,12 +291,10 @@ async function advanceStage() {
   }
 
   const progLog: ProcessLog = {
-    id: "log_" + Date.now(),
-    timestamp: new Date().toISOString(),
-    stage: nextStage,
-    action: "Stage Progression",
-    operator: "ESP32 Controller",
-    details: `${nextStage} sequence initialized. Actuators adjusted properly.`
+    id: Math.floor(Math.random() * 1000000),
+    created_at: new Date().toISOString(),
+    process_stage: nextStage,
+    description: `${nextStage} sequence initialized. Actuators adjusted properly. (Stage Progression by ESP32 Controller)`
   };
   processLogs.unshift(progLog);
 
@@ -359,20 +355,24 @@ app.post("/api/system/start", async (req, res) => {
   systemStatus.paused = false;
   currentStageIndex = 0;
   
-  const startLog = {
-    id: "log_" + Date.now(),
-    timestamp: new Date().toISOString(),
-    stage: "Ready" as const,
-    action: "Manual Cycle Start",
-    operator: sessionUser ? sessionUser.name : "Admin",
-    details: "Wet waste separation run triggered from Web Control Center UI."
+  const startLog: ProcessLog = {
+    id: Math.floor(Math.random() * 1000000),
+    created_at: new Date().toISOString(),
+    process_stage: "Ready",
+    description: `Wet waste separation run triggered from Web Control Center UI. (Manual Cycle Start by ${sessionUser ? sessionUser.name : "Admin"})`
   };
   processLogs.unshift(startLog);
 
   try {
     await insertProcessLogDb(startLog);
+    // Sync command and status to machine_control table for ESP32 & Web app
+    await db.execute(sql`
+      UPDATE "machine_control" 
+      SET "command" = 'START', "status" = 'RUNNING', "updated_at" = NOW() 
+      WHERE "id" = 1
+    `);
   } catch (e) {
-    console.error("Failed to insert start log into database", e);
+    console.error("Failed to insert start log or update machine_control in database", e);
   }
 
   // Cancel any trailing timer
@@ -406,21 +406,25 @@ app.post("/api/system/stop", async (req, res) => {
   actuatorStatus.buzzer = false;
   actuatorStatus.lcdMessage = "EMERGENCY STOP ENGAGED";
 
-  const stopLog = {
-    id: "log_" + Date.now(),
-    timestamp: new Date().toISOString(),
-    stage: "Ready" as const,
-    action: "Emergency Stop triggered",
-    operator: sessionUser ? sessionUser.name : "Admin Code",
-    details: "Emergency bypass triggered. All actuator lines shut down safely."
+  const stopLog: ProcessLog = {
+    id: Math.floor(Math.random() * 1000000),
+    created_at: new Date().toISOString(),
+    process_stage: "Ready",
+    description: `Emergency bypass triggered. All actuator lines shut down safely. (Emergency Stop triggered by ${sessionUser ? sessionUser.name : "Admin Code"})`
   };
   processLogs.unshift(stopLog);
 
   try {
     await insertProcessLogDb(stopLog);
     await updateActuatorStatusInDb(actuatorStatus);
+    // Sync command and status to machine_control table for ESP32 & Web app
+    await db.execute(sql`
+      UPDATE "machine_control" 
+      SET "command" = 'STOP', "status" = 'STOPPED', "updated_at" = NOW() 
+      WHERE "id" = 1
+    `);
   } catch (e) {
-    console.error("Failed to stop system in database", e);
+    console.error("Failed to stop system or update machine_control in database", e);
   }
 
   broadcastState();
@@ -466,13 +470,11 @@ app.post("/api/system/reset", async (req, res) => {
     buzzer: false
   };
 
-  const resetLog = {
-    id: "log_" + Date.now(),
-    timestamp: new Date().toISOString(),
-    stage: "Ready" as const,
-    action: "System Flush / Reset",
-    operator: sessionUser ? sessionUser.name : "Admin",
-    details: "All dustbin counters flushed. Actuators zeroed out."
+  const resetLog: ProcessLog = {
+    id: Math.floor(Math.random() * 1000000),
+    created_at: new Date().toISOString(),
+    process_stage: "Ready",
+    description: `All dustbin counters flushed. Actuators zeroed out. (System Flush / Reset by ${sessionUser ? sessionUser.name : "Admin"})`
   };
   processLogs.unshift(resetLog);
 
@@ -510,6 +512,11 @@ app.post("/api/system/reset", async (req, res) => {
       WHERE "id" IN (1, 2)
     `);
     await db.execute(sql`
+      UPDATE "machine_control" 
+      SET "command" = 'RESET', "status" = 'IDLE', "updated_at" = NOW() 
+      WHERE "id" = 1
+    `);
+    await db.execute(sql`
       INSERT INTO "process_logs" ("process_stage", "description", "created_at") 
       VALUES ('Ready', 'All custom IoT tables flushed to standby parameters.', NOW())
     `);
@@ -534,13 +541,11 @@ app.post("/api/system/manual-actuator", async (req, res) => {
     (actuatorStatus as any)[actuator] = val;
     actuatorStatus.lcdMessage = `MANUAL STATE: ${actuator.toUpperCase()} => ${val}`;
     
-    const logItem = {
-      id: "log_" + Date.now(),
-      timestamp: new Date().toISOString(),
-      stage: systemStatus.stage,
-      action: "Manual Override Toggle",
-      operator: sessionUser.name,
-      details: `Dispatched manual toggle command to ${actuator} with status value: ${val}`
+    const logItem: ProcessLog = {
+      id: Math.floor(Math.random() * 1000000),
+      created_at: new Date().toISOString(),
+      process_stage: systemStatus.stage,
+      description: `Dispatched manual toggle command to ${actuator} with status value: ${val}. (Manual Override Toggle by ${sessionUser.name})`
     };
     processLogs.unshift(logItem);
 
@@ -764,6 +769,18 @@ app.get("/api/supabase/iot-data", async (req, res) => {
     const pumpsRes = await db.execute(sql`SELECT * FROM "pump_status" ORDER BY id ASC`);
     const logsRes = await db.execute(sql`SELECT * FROM "process_logs" ORDER BY id DESC LIMIT 50`);
 
+    let machineRes = { rows: [] as any[] };
+    try {
+      machineRes = await db.execute(sql`SELECT * FROM "machine_control" WHERE "id" = 1`);
+      if (machineRes.rows.length === 0) {
+        await db.execute(sql`INSERT INTO "machine_control" ("id", "command", "status", "updated_at") VALUES (1, 'IDLE', 'IDLE', NOW()) ON CONFLICT (id) DO NOTHING`);
+        machineRes = await db.execute(sql`SELECT * FROM "machine_control" WHERE "id" = 1`);
+      }
+    } catch (e) {
+      console.warn("[API] machine_control table may not exist yet, using default fallback values", e);
+      machineRes = { rows: [{ id: 1, command: "IDLE", status: "IDLE" }] };
+    }
+
     res.json({
       success: true,
       data: {
@@ -772,7 +789,8 @@ app.get("/api/supabase/iot-data", async (req, res) => {
         liquid_tank: liquidTankRes.rows,
         servo_status: servosRes.rows,
         pump_status: pumpsRes.rows,
-        process_logs: logsRes.rows
+        process_logs: logsRes.rows,
+        machine_control: machineRes.rows
       }
     });
   } catch (error: any) {
@@ -831,6 +849,161 @@ app.post("/api/supabase/update-iot-data", async (req, res) => {
         INSERT INTO "process_logs" ("process_stage", "description", "created_at") 
         VALUES (${process_stage}, ${description}, NOW())
       `);
+    } else if (table === "machine_control") {
+      const { command, status } = payload;
+      if (command !== undefined && status !== undefined) {
+        await db.execute(sql`
+          UPDATE "machine_control" 
+          SET "command" = ${command}, "status" = ${status}, "updated_at" = NOW() 
+          WHERE "id" = ${id || 1}
+        `);
+      } else if (command !== undefined) {
+        let targetStatus = "IDLE";
+        if (command === "START") targetStatus = "RUNNING";
+        else if (command === "STOP") targetStatus = "STOPPED";
+        else if (command === "RESET") targetStatus = "IDLE";
+
+        await db.execute(sql`
+          UPDATE "machine_control" 
+          SET "command" = ${command}, "status" = ${targetStatus}, "updated_at" = NOW() 
+          WHERE "id" = ${id || 1}
+        `);
+
+        // Trigger local simulation process adjustments to align with database updates
+        if (command === "START" && !systemStatus.isProcessing) {
+          systemStatus.isProcessing = true;
+          systemStatus.paused = false;
+          currentStageIndex = 0;
+          
+          const startLog: ProcessLog = {
+            id: Math.floor(Math.random() * 1000000),
+            created_at: new Date().toISOString(),
+            process_stage: "Ready",
+            description: `Separation treatment run triggered via IoT database channel command (START).`
+          };
+          processLogs.unshift(startLog);
+          try {
+            await insertProcessLogDb(startLog);
+          } catch (e) {
+            console.error("Failed to insert start log", e);
+          }
+          if (stageTimer) clearTimeout(stageTimer);
+          advanceStage();
+          broadcastState();
+        } else if (command === "STOP") {
+          systemStatus.isProcessing = false;
+          systemStatus.stage = "Ready";
+          if (stageTimer) {
+            clearTimeout(stageTimer);
+            stageTimer = null;
+          }
+          actuatorStatus.pump1 = false;
+          actuatorStatus.pump2 = false;
+          actuatorStatus.servo1 = "CLOSED";
+          actuatorStatus.servo2 = "CLOSED";
+          actuatorStatus.servo3 = "CLOSED";
+          actuatorStatus.servo4 = "CLOSED";
+          actuatorStatus.buzzer = false;
+          actuatorStatus.lcdMessage = "EMERGENCY STOP ENGAGED";
+
+          const stopLog: ProcessLog = {
+            id: Math.floor(Math.random() * 1000000),
+            created_at: new Date().toISOString(),
+            process_stage: "Ready",
+            description: `Process execution halted via IoT database channel command (STOP). All actuators zeroed.`
+          };
+          processLogs.unshift(stopLog);
+          try {
+            await insertProcessLogDb(stopLog);
+            await updateActuatorStatusInDb(actuatorStatus);
+          } catch (e) {
+            console.error("Failed to insert stop logs", e);
+          }
+          broadcastState();
+        } else if (command === "RESET") {
+          if (stageTimer) {
+            clearTimeout(stageTimer);
+            stageTimer = null;
+          }
+          systemStatus = {
+            online: true,
+            esp32Connected: true,
+            stage: "Ready",
+            isProcessing: false,
+            paused: false
+          };
+          binsStatus = [
+            { id: "dustbin1", name: "Dustbin 1 (Large Waste)", type: "large", level: 0, capacity: 0, distance: 40, status: "Normal" },
+            { id: "dustbin2", name: "Dustbin 2 (Fine Waste)", type: "fine", level: 0, capacity: 0, distance: 40, status: "Normal" },
+            { id: "liquidTank", name: "Liquid Collection Tank", type: "liquid", level: 0, capacity: 0, distance: 50, status: "Normal" }
+          ];
+          sensorReadings = [
+            { sensorId: "ultrasonic1", name: "Ultrasonic Sensor 1 (Dustbin 1)", distance: 40, fillPercentage: 0, lastUpdated: new Date().toISOString() },
+            { sensorId: "ultrasonic2", name: "Ultrasonic Sensor 2 (Dustbin 2)", distance: 40, fillPercentage: 0, lastUpdated: new Date().toISOString() },
+            { sensorId: "ultrasonic3", name: "Ultrasonic Sensor 3 (Liquid Tank)", distance: 50, fillPercentage: 0, lastUpdated: new Date().toISOString() }
+          ];
+          actuatorStatus = {
+            servo1: "CLOSED",
+            servo2: "CLOSED",
+            servo3: "CLOSED",
+            servo4: "CLOSED",
+            pump1: false,
+            pump2: false,
+            lcdMessage: "SYSTEM RESET - READY",
+            buzzer: false
+          };
+          const resetLog: ProcessLog = {
+            id: Math.floor(Math.random() * 1000000),
+            created_at: new Date().toISOString(),
+            process_stage: "Ready",
+            description: `All dustbin counters flushed. Actuators zeroed out. (System Flush / Reset by Database reset command)`
+          };
+          processLogs.unshift(resetLog);
+          alerts = alerts.map(alt => ({ ...alt, resolved: true }));
+          try {
+            await insertProcessLogDb(resetLog);
+            await resetSystemDb();
+            await db.execute(sql`
+              UPDATE "system_status" 
+              SET "esp32_status" = 'online', "current_stage" = 'Ready', "lcd_message" = 'SYSTEM RESET - READY', "buzzer_status" = false, "updated_at" = NOW() 
+              WHERE "id" = 1
+            `);
+            await db.execute(sql`
+              UPDATE "dustbins" 
+              SET "fill_percentage" = 0, "status" = 'Normal', "updated_at" = NOW() 
+              WHERE "id" IN (1, 2)
+            `);
+            await db.execute(sql`
+              UPDATE "liquid_tank" 
+              SET "fill_percentage" = 0, "status" = 'Normal', "updated_at" = NOW() 
+              WHERE "id" = 1
+            `);
+            await db.execute(sql`
+              UPDATE "servo_status" 
+              SET "angle" = 0, "status" = 'Standby', "updated_at" = NOW() 
+              WHERE "id" IN (1, 2, 3, 4)
+            `);
+            await db.execute(sql`
+              UPDATE "pump_status" 
+              SET "status" = 'OFF', "updated_at" = NOW() 
+              WHERE "id" IN (1, 2)
+            `);
+            await db.execute(sql`
+              INSERT INTO "process_logs" ("process_stage", "description", "created_at") 
+              VALUES ('Ready', 'All custom IoT tables flushed to standby parameters.', NOW())
+            `);
+          } catch (e) {
+            console.error("Failed to reset db", e);
+          }
+          broadcastState();
+        }
+      } else if (status !== undefined) {
+        await db.execute(sql`
+          UPDATE "machine_control" 
+          SET "status" = ${status}, "updated_at" = NOW() 
+          WHERE "id" = ${id || 1}
+        `);
+      }
     } else {
       return res.status(400).json({ success: false, error: `Unsupported table: ${table}` });
     }

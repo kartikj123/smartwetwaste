@@ -16,6 +16,7 @@ alter publication supabase_realtime add table sensor_readings;
 alter publication supabase_realtime add table actuator_status;
 alter publication supabase_realtime add table alerts;
 alter publication supabase_realtime add table system_status;
+alter publication supabase_realtime add table machine_control;
 
 -- 2. TABLE: users
 create table users (
@@ -140,6 +141,29 @@ insert into analytics (date_label, large_waste_kg, fine_waste_kg, liquid_extract
 ('Fri', 30.0, 28.0, 45.0, 12),
 ('Sat', 8.0, 12.0, 15.0, 4),
 ('Sun', 14.0, 10.0, 20.0, 5);
+
+-- 11. TABLE: machine_control
+create table machine_control (
+  id integer primary key default 1,
+  command text not null default 'IDLE',
+  status text not null default 'IDLE',
+  updated_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- Insert default row
+insert into machine_control (id, command, status) 
+values (1, 'IDLE', 'IDLE')
+on conflict (id) do nothing;
+
+-- Enable Row Level Security (RLS)
+alter table machine_control enable row level security;
+
+-- Create policies for SELECT and UPDATE (No INSERT/DELETE from UI)
+create policy "Allow SELECT for all users" on machine_control
+  for select using (true);
+
+create policy "Allow UPDATE for all users" on machine_control
+  for update using (true) with check (true);
 `;
 
   const copyCode = () => {
