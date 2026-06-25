@@ -125,6 +125,9 @@ export default function App() {
   const [isNotifOpen, setIsNotifOpen] = useState<boolean>(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [activeMode, setActiveMode] = useState<"backend" | "supabase_direct" | "local_simulation" | "initializing">("initializing");
+  const [isDbGuideOpen, setIsDbGuideOpen] = useState<boolean>(false);
+  const [customUrlInput, setCustomUrlInput] = useState<string>(() => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_URL") || "" : "");
+  const [customKeyInput, setCustomKeyInput] = useState<string>(() => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_ANON_KEY") || "" : "");
 
   // Quick Manual simulator state overrides for easy direct writeback to database
   const [simStage, setSimStage] = useState<string>("Checking Dustbins");
@@ -512,20 +515,116 @@ export default function App() {
     }
   };
 
+  // Save credentials entered manually by the user (perfect for serverless Vercel hosts)
+  const handleSaveCustomCredentials = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customUrlInput || !customKeyInput) {
+      showToast("Please provide both a valid Supabase URL and Anon Key.", "error");
+      return;
+    }
+    try {
+      new URL(customUrlInput);
+    } catch {
+      showToast("Please provide a structurally valid URL (starting with http:// or https://).", "error");
+      return;
+    }
+    localStorage.setItem("VITE_SUPABASE_URL", customUrlInput.trim());
+    localStorage.setItem("VITE_SUPABASE_ANON_KEY", customKeyInput.trim());
+    showToast("Credentials successfully updated! Reloading application...", "success");
+    setTimeout(() => {
+      window.location.reload();
+    }, 1500);
+  };
+
+  const handleClearCustomCredentials = () => {
+    localStorage.removeItem("VITE_SUPABASE_URL");
+    localStorage.removeItem("VITE_SUPABASE_ANON_KEY");
+    setCustomUrlInput("");
+    setCustomKeyInput("");
+    showToast("Custom credentials cleared! Reloading and falling back...", "info");
+    setTimeout(() => {
+      window.location.reload();
+    }, 1500);
+  };
+
   // Reset database back to default standby configuration
   const handleResetDatabaseDefaults = async () => {
-    if (!window.confirm("Are you sure you want to reset all Supabase tables to default standby specs?")) return;
+    if (!window.confirm("Are you sure you want to reset all database tables to default standby specs? This will rewrite initial parameters!")) return;
     try {
       setLoading(true);
-      const res = await fetch("/api/system/reset", { method: "POST" });
-      if (res.ok) {
-        showToast("Supabase IoT registers initialized to default parameters!", "success");
+      if (activeMode === "backend") {
+        const res = await fetch("/api/system/reset", { method: "POST" });
+        if (res.ok) {
+          showToast("Supabase registers initialized to default parameters!", "success");
+          fetchAllIotData();
+        } else {
+          throw new Error("Reset API endpoint failed.");
+        }
+      } else if (activeMode === "supabase_direct" && supabase) {
+        showToast("Seeding direct Supabase tables...", "info");
+        
+        // 1. Clear out rows in child-first order to prevent key issues
+        await Promise.all([
+          supabase.from("process_logs").delete().neq("id", 0),
+          supabase.from("system_status").delete().neq("id", 0),
+          supabase.from("dustbins").delete().neq("id", 0),
+          supabase.from("liquid_tank").delete().neq("id", 0),
+          supabase.from("servo_status").delete().neq("id", 0),
+          supabase.from("pump_status").delete().neq("id", 0)
+        ]);
+
+        // 2. Insert standard demo/production dataset
+        await Promise.all([
+          supabase.from("system_status").insert([{ id: 1, esp32_status: "online", current_stage: "Completed", lcd_message: "CYCLE COMPLETE. READY", buzzer_status: false }]),
+          supabase.from("dustbins").insert([
+            { id: 1, dustbin_name: "Dustbin 1 (Large Waste)", waste_type: "Large Waste", fill_percentage: 15, status: "Normal", capacity: 50 },
+            { id: 2, dustbin_name: "Dustbin 2 (Fine Waste)", waste_type: "Fine Waste", fill_percentage: 32, status: "Normal", capacity: 50 }
+          ]),
+          supabase.from("liquid_tank").insert([{ id: 1, fill_percentage: 22, status: "Normal", capacity: 100 }]),
+          supabase.from("servo_status").insert([
+            { id: 1, servo_name: "Servo 1 (Inlet Flap)", angle: 90, status: "Open" },
+            { id: 2, servo_name: "Servo 2 (Large Waste)", angle: 0, status: "Closed" },
+            { id: 3, servo_name: "Servo 3 (Fine Waste)", angle: 90, status: "Open" },
+            { id: 4, servo_name: "Servo 4 (Water Valve)", angle: 0, status: "Closed" }
+          ]),
+          supabase.from("pump_status").insert([
+            { id: 1, pump_name: "Water Pump 1", status: "OFF" },
+            { id: 2, pump_name: "Vacuum Pump 2", status: "OFF" }
+          ]),
+          supabase.from("process_logs").insert([
+            { id: 1, process_stage: "Checking Dustbins", description: "Ultrasonic sensors scanned bin volume levels. System check parameters normal." },
+            { id: 2, process_stage: "Checking Dustbins", description: "Smart Segregator initialized. Monitoring active." }
+          ])
+        ]);
+
+        showToast("Your custom Supabase has been successfully seeded with active telemetry records!", "success");
         fetchAllIotData();
       } else {
-        throw new Error("Reset endpoint failed.");
+        // Pure in-memory sandbox local reset
+        setSystemStatus({ id: 1, esp32_status: "online", current_stage: "Checking Dustbins", lcd_message: "SYSTEM READY", buzzer_status: false, updated_at: new Date().toISOString() });
+        setDustbins([
+          { id: 1, dustbin_name: "Dustbin 1 (Large Waste)", waste_type: "Large Waste", fill_percentage: 15, status: "Normal", capacity: 50, updated_at: new Date().toISOString() },
+          { id: 2, dustbin_name: "Dustbin 2 (Fine Waste)", waste_type: "Fine Waste", fill_percentage: 32, status: "Normal", capacity: 50, updated_at: new Date().toISOString() }
+        ]);
+        setLiquidTank({ id: 1, fill_percentage: 22, status: "Normal", capacity: 100, updated_at: new Date().toISOString() });
+        setServos([
+          { id: 1, servo_name: "Servo 1 (Inlet Flap)", angle: 90, status: "Open", updated_at: new Date().toISOString() },
+          { id: 2, servo_name: "Servo 2 (Large Waste)", angle: 0, status: "Closed", updated_at: new Date().toISOString() },
+          { id: 3, servo_name: "Servo 3 (Fine Waste)", angle: 90, status: "Open", updated_at: new Date().toISOString() },
+          { id: 4, servo_name: "Servo 4 (Water Valve)", angle: 0, status: "Closed", updated_at: new Date().toISOString() }
+        ]);
+        setPumps([
+          { id: 1, pump_name: "Water Pump 1", status: "OFF", updated_at: new Date().toISOString() },
+          { id: 2, pump_name: "Vacuum Pump 2", status: "OFF", updated_at: new Date().toISOString() }
+        ]);
+        setLogs([
+          { id: 1, process_stage: "Checking Dustbins", description: "Ultrasonic sensors scanned bin volume levels. System check parameters normal.", created_at: new Date(Date.now() - 60000).toISOString() },
+          { id: 2, process_stage: "Checking Dustbins", description: "Smart Segregator initialized. Monitoring active.", created_at: new Date(Date.now() - 120000).toISOString() }
+        ]);
+        showToast("Local demonstration parameters restored to standby specs!", "success");
       }
     } catch (err: any) {
-      showToast(`Reset Failed: ${err.message}`, "error");
+      showToast(`Database Seeding Failed: ${err.message}`, "error");
     } finally {
       setLoading(false);
     }
@@ -1027,20 +1126,22 @@ export default function App() {
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`inline-block px-3 py-1 rounded-full text-[10px] uppercase font-black tracking-widest mb-3 mx-auto ${
+          onClick={() => setIsDbGuideOpen(true)}
+          className={`inline-block px-3 py-1.5 rounded-full text-[10px] uppercase font-black tracking-widest mb-3 mx-auto cursor-pointer hover:scale-105 active:scale-95 transition-all shadow-lg hover:shadow-emerald-500/5 ${
             activeMode === "backend" 
-              ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+              ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20" 
               : activeMode === "supabase_direct"
-              ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
-              : "bg-amber-500/10 border border-amber-500/20 text-amber-400"
+              ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20"
+              : "bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
           }`}
+          title="Click to inspect real-time database connection setup guide"
         >
           <span className={`pulse-led inline-block w-1.5 h-1.5 rounded-full mr-2 ${
-            activeMode === "backend" ? "bg-emerald-500" : activeMode === "supabase_direct" ? "bg-cyan-400" : "bg-amber-500 animate-pulse"
+            activeMode === "backend" ? "bg-emerald-500 animate-pulse" : activeMode === "supabase_direct" ? "bg-cyan-400 animate-pulse" : "bg-amber-500 animate-pulse"
           }`}></span>
-          {activeMode === "backend" && "Direct Live Supabase Backend Connected"}
-          {activeMode === "supabase_direct" && "Direct Client-Side Supabase Active"}
-          {activeMode === "local_simulation" && "Vercel Sandbox Demonstration Active"}
+          {activeMode === "backend" && "Direct Live Supabase Backend Connected ⚡ (Info)"}
+          {activeMode === "supabase_direct" && "Direct Client-Side Supabase Active ⚡ (Info)"}
+          {activeMode === "local_simulation" && "Vercel Sandbox Demonstration Active ⚠️ (Configure)"}
           {activeMode === "initializing" && "Syncing Connection Mode..."}
         </motion.div>
 
@@ -1809,6 +1910,210 @@ export default function App() {
           })}
         </div>
       </nav>
+
+      {/* --- DATABASE INTEGRATION STATUS & VERCEL CONFIGURATION GUIDE --- */}
+      <AnimatePresence>
+        {isDbGuideOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#0b0e0c] border border-emerald-500/20 rounded-3xl p-6 sm:p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto space-y-6 text-left shadow-[0_0_50px_rgba(16,185,129,0.1)]"
+            >
+              <div className="flex items-center justify-between border-b border-emerald-500/10 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <Database className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider font-mono">
+                    Database Integration Center
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setIsDbGuideOpen(false)}
+                  className="p-1.5 rounded-lg hover:bg-emerald-500/10 text-gray-400 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Status breakdown card */}
+              <div className="p-4 bg-emerald-950/20 rounded-2xl border border-emerald-500/10 space-y-3">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-gray-400 font-bold">Detected Runtime Environment:</span>
+                  <span className="font-mono text-emerald-400 font-black uppercase tracking-wide">
+                    {activeMode === "backend" ? "Google Cloud Container (AI Studio)" : "Client-Side (Vercel/Static Host)"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-gray-400 font-bold">Active Communication Layer:</span>
+                  <span className={`font-mono font-black uppercase tracking-wide ${
+                    activeMode === "backend" ? "text-emerald-400" : activeMode === "supabase_direct" ? "text-cyan-400" : "text-amber-400"
+                  }`}>
+                    {activeMode === "backend" && "Secure Express Proxy Router (/api)"}
+                    {activeMode === "supabase_direct" && "Direct Supabase Client SDK Connection"}
+                    {activeMode === "local_simulation" && "In-Memory Demonstration Sandbox"}
+                    {activeMode === "initializing" && "Syncing Connection..."}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dynamic explanations */}
+              <div className="space-y-4 text-xs leading-relaxed text-gray-300">
+                {activeMode === "local_simulation" ? (
+                  <>
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4 space-y-2.5">
+                      <div className="flex items-center gap-2 text-amber-400 font-black uppercase text-[10px] tracking-wider">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        Why is Vercel showing different/simulated data?
+                      </div>
+                      <p className="text-gray-400">
+                        When hosted on Vercel, the app runs as a **Static Frontend Site**. Because there is no persistent backend server active on Vercel to route requests, the default database connection fails with a <code className="bg-black/60 px-1 text-rose-400 font-mono">404 Error</code>.
+                      </p>
+                      <p className="text-gray-400">
+                        To protect your app and connect it directly to your live Supabase database without needing a backend server, you must provide your direct client-side credentials in Vercel.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-black text-white uppercase tracking-widest border-l-2 border-emerald-500 pl-2">
+                        How to Sync Your Real Database to Vercel (3 Steps):
+                      </h4>
+                      <ol className="list-decimal list-inside space-y-2.5 pl-1 text-gray-400">
+                        <li>
+                          Open your **Supabase Dashboard** and navigate to your project's **Settings &gt; API**.
+                        </li>
+                        <li>
+                          Open your **Vercel Project Dashboard**, go to **Settings &gt; Environment Variables**, and add the following two key-value pairs:
+                          <div className="bg-black/80 rounded-xl p-3 my-2 font-mono text-[10px] space-y-1.5 border border-emerald-500/10 select-all">
+                            <div><span className="text-teal-400">VITE_SUPABASE_URL</span> = <span className="text-gray-500">&lt;your-project-url&gt;</span></div>
+                            <div><span className="text-teal-400">VITE_SUPABASE_ANON_KEY</span> = <span className="text-gray-500">&lt;your-project-anon-key&gt;</span></div>
+                          </div>
+                        </li>
+                        <li>
+                          **Redeploy your Vercel project**. Once done, the app will instantly bypass the simulated fallback and connect directly to your actual live Postgres tables using real-time WebSockets!
+                        </li>
+                      </ol>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-4 space-y-2.5">
+                      <div className="flex items-center gap-2 text-emerald-400 font-black uppercase text-[10px] tracking-wider">
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        Real-Time Database Synchronized Successfully
+                      </div>
+                      <p className="text-gray-400">
+                        Your app is fully configured and connected directly to the live Supabase tables. Every stage modification, sensor value, or motor angle is instantly saved and broadcasted in real-time.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black text-white uppercase tracking-widest border-l-2 border-emerald-500 pl-2">
+                        Live Sync Architecture:
+                      </h4>
+                      <p className="text-gray-400">
+                        This build uses PostgreSQL listeners to capture raw machine telemetry instantly. If you run a hardware node (e.g. ESP32, Arduino) with this database, both the hardware and this dashboard will stay in perfect sync!
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {/* Direct browser credential overrides (perfect bypass for Vercel limitations) */}
+                <div className="bg-[#0e1411]/50 border border-teal-500/20 rounded-2xl p-4 sm:p-5 space-y-4">
+                  <div className="flex items-center gap-2 text-teal-400 font-black uppercase text-[10px] tracking-wider">
+                    <Database className="w-4 h-4 text-teal-400" />
+                    Bypass Server/Vercel Config: Direct Browser Connection
+                  </div>
+                  <p className="text-gray-400 text-[11px] leading-relaxed">
+                    If you are running on a free static Vercel host or cannot add Environment Variables, you can connect your live Supabase database directly from this browser! Your credentials will be saved locally and used securely.
+                  </p>
+
+                  <form onSubmit={handleSaveCustomCredentials} className="space-y-3">
+                    <div>
+                      <label className="block text-[9px] font-black uppercase text-gray-400 tracking-wider mb-1">
+                        Supabase Project URL
+                      </label>
+                      <input
+                        type="text"
+                        value={customUrlInput}
+                        onChange={(e) => setCustomUrlInput(e.target.value)}
+                        placeholder="https://yourprojectid.supabase.co"
+                        className="w-full px-3 py-2 bg-black/60 border border-gray-800 focus:border-teal-500 rounded-xl text-xs font-mono text-gray-200 outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] font-black uppercase text-gray-400 tracking-wider mb-1">
+                        Supabase Anon / Public Key
+                      </label>
+                      <input
+                        type="password"
+                        value={customKeyInput}
+                        onChange={(e) => setCustomKeyInput(e.target.value)}
+                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                        className="w-full px-3 py-2 bg-black/60 border border-gray-800 focus:border-teal-500 rounded-xl text-xs font-mono text-gray-200 outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div className="flex gap-2.5 pt-1.5">
+                      <button
+                        type="submit"
+                        className="px-4 py-2 bg-teal-500 hover:bg-teal-600 text-black text-[10px] font-black uppercase tracking-wider rounded-xl cursor-pointer transition-all hover:scale-105 active:scale-95"
+                      >
+                        Connect Direct Database ⚡
+                      </button>
+                      {(typeof window !== "undefined" && (localStorage.getItem("VITE_SUPABASE_URL") || localStorage.getItem("VITE_SUPABASE_ANON_KEY"))) && (
+                        <button
+                          type="button"
+                          onClick={handleClearCustomCredentials}
+                          className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all"
+                        >
+                          Disconnect Credentials ❌
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+
+                {/* Database Maintenance Tools */}
+                <div className="border-t border-emerald-500/10 pt-4 space-y-3">
+                  <h4 className="text-[10px] font-black text-white uppercase tracking-widest">
+                    Database Schema Maintenance
+                  </h4>
+                  <p className="text-gray-400 text-[11px]">
+                    If your Supabase database was newly created and is currently empty, or if you want to clear old telemetry logs and reset the segregator registers to default standby specs, click the button below.
+                  </p>
+
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    <button
+                      onClick={() => {
+                        setIsDbGuideOpen(false);
+                        handleResetDatabaseDefaults();
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40 text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
+                      Seed/Re-Seed Database Tables
+                    </button>
+                    <button
+                      onClick={() => {
+                        fetchAllIotData(false);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-gray-800 text-gray-300 border border-gray-800 text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                    >
+                      Trigger Status Query
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-emerald-500/5 text-center text-[10px] text-gray-500 font-mono">
+                Bypassing Serverless Restrictions with Client-Side Fallbacks
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

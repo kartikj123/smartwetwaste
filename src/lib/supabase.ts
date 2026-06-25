@@ -12,8 +12,11 @@ function isValidHttpUrl(str: string): boolean {
   }
 }
 
-const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY || "";
+const getLocalUrl = () => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_URL") : null;
+const getLocalKey = () => typeof window !== "undefined" ? localStorage.getItem("VITE_SUPABASE_ANON_KEY") : null;
+
+const supabaseUrl = getLocalUrl() || import.meta.env?.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = getLocalKey() || import.meta.env?.VITE_SUPABASE_ANON_KEY || "";
 
 // Verify both exist, aren't placeholders, and the URL is structurally valid
 export const isSupabaseConfigured = Boolean(
