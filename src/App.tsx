@@ -82,21 +82,49 @@ export interface ProcessLogRow {
 }
 
 export default function App() {
-  // DB State from Supabase
-  const [systemStatus, setSystemStatus] = useState<SystemStatusRow | null>(null);
-  const [dustbins, setDustbins] = useState<DustbinRow[]>([]);
-  const [liquidTank, setLiquidTank] = useState<LiquidTankRow | null>(null);
-  const [servos, setServos] = useState<ServoStatusRow[]>([]);
-  const [pumps, setPumps] = useState<PumpStatusRow[]>([]);
-  const [logs, setLogs] = useState<ProcessLogRow[]>([]);
+  // DB State from Supabase (with beautiful fallback/mock parameters to allow offline & static hosting preview support)
+  const [systemStatus, setSystemStatus] = useState<SystemStatusRow | null>({
+    id: 1,
+    esp32_status: "online",
+    current_stage: "Checking Dustbins",
+    lcd_message: "SYSTEM READY",
+    buzzer_status: false,
+    updated_at: new Date().toISOString()
+  });
+  const [dustbins, setDustbins] = useState<DustbinRow[]>([
+    { id: 1, dustbin_name: "Dustbin 1 (Large Waste)", waste_type: "Large Waste", fill_percentage: 15, status: "Normal", capacity: 50, updated_at: new Date().toISOString() },
+    { id: 2, dustbin_name: "Dustbin 2 (Fine Waste)", waste_type: "Fine Waste", fill_percentage: 32, status: "Normal", capacity: 50, updated_at: new Date().toISOString() }
+  ]);
+  const [liquidTank, setLiquidTank] = useState<LiquidTankRow | null>({
+    id: 1,
+    fill_percentage: 22,
+    status: "Normal",
+    capacity: 100,
+    updated_at: new Date().toISOString()
+  });
+  const [servos, setServos] = useState<ServoStatusRow[]>([
+    { id: 1, servo_name: "Servo 1 (Inlet Flap)", angle: 90, status: "Open", updated_at: new Date().toISOString() },
+    { id: 2, servo_name: "Servo 2 (Large Waste)", angle: 0, status: "Closed", updated_at: new Date().toISOString() },
+    { id: 3, servo_name: "Servo 3 (Fine Waste)", angle: 90, status: "Open", updated_at: new Date().toISOString() },
+    { id: 4, servo_name: "Servo 4 (Water Valve)", angle: 0, status: "Closed", updated_at: new Date().toISOString() }
+  ]);
+  const [pumps, setPumps] = useState<PumpStatusRow[]>([
+    { id: 1, pump_name: "Water Pump 1", status: "OFF", updated_at: new Date().toISOString() },
+    { id: 2, pump_name: "Vacuum Pump 2", status: "OFF", updated_at: new Date().toISOString() }
+  ]);
+  const [logs, setLogs] = useState<ProcessLogRow[]>([
+    { id: 1, process_stage: "Checking Dustbins", description: "Ultrasonic sensors scanned bin volume levels. System check parameters normal.", created_at: new Date(Date.now() - 60000).toISOString() },
+    { id: 2, process_stage: "Checking Dustbins", description: "Smart Segregator initialized. Monitoring active.", created_at: new Date(Date.now() - 120000).toISOString() }
+  ]);
 
-  // UI Navigation & Dialog States
+  // UI Navigation, Connection Mode & Dialog States
   const [activeTab, setActiveTab] = useState<"home" | "process" | "logs" | "about">("home");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [isNotifOpen, setIsNotifOpen] = useState<boolean>(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  const [activeMode, setActiveMode] = useState<"backend" | "supabase_direct" | "local_simulation" | "initializing">("initializing");
 
   // Quick Manual simulator state overrides for easy direct writeback to database
   const [simStage, setSimStage] = useState<string>("Checking Dustbins");
@@ -126,18 +154,16 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Fetch all live database state directly from Supabase (unified server-side route for speed & safety)
+  // Fetch all live database state. Automatically switches modes (Express API -> Direct Supabase SDK -> Interactive Local Mock Sandbox)
   const fetchAllIotData = async (silent: boolean = false) => {
     if (!silent) setLoading(true);
+    
+    // Attempt 1: Fetch via local Express API (Active container)
     try {
       const res = await fetch("/api/supabase/iot-data");
       const payload = await res.json().catch(() => null);
       
-      if (!res.ok) {
-        throw new Error(payload?.error || `Backend returned error status ${res.status}`);
-      }
-      
-      if (payload && payload.success && payload.data) {
+      if (res.ok && payload && payload.success && payload.data) {
         const d = payload.data;
         setSystemStatus(d.system_status[0] || null);
         setDustbins(d.dustbins || []);
@@ -146,7 +172,7 @@ export default function App() {
         setPumps(d.pump_status || []);
         setLogs(d.process_logs || []);
 
-        // Synchronize simulator state inputs to the fetched data on load
+        // Sync local simulator state on load
         if (d.system_status[0]) {
           setSimStage(d.system_status[0].current_stage);
           setSimEspStatus(d.system_status[0].esp32_status);
@@ -169,36 +195,157 @@ export default function App() {
         });
         setSimPumpStates(prev => ({ ...prev, ...pStates }));
 
+        setActiveMode("backend");
         setError(null);
+        return;
       } else {
-        throw new Error(payload?.error || "Invalid response payload from backend service.");
+        throw new Error(payload?.error || `API returned status ${res.status}`);
       }
     } catch (err: any) {
-      console.error("Fetch IoT Data Error:", err);
-      setError(err.message || "Failed to establish an API connection with the database schema.");
+      console.warn("Express backend endpoint failed or not active, checking fallback configurations:", err.message);
+      
+      // Attempt 2: Direct Client-Side Supabase (Vercel deployment with environment variables loaded)
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const [
+            { data: system_status, error: errSys },
+            { data: dustbinsData, error: errBins },
+            { data: liquid_tank, error: errTank },
+            { data: servo_status, error: errServos },
+            { data: pump_status, error: errPumps },
+            { data: process_logs, error: errLogs }
+          ] = await Promise.all([
+            supabase.from("system_status").select("*").order("id", { ascending: true }),
+            supabase.from("dustbins").select("*").order("id", { ascending: true }),
+            supabase.from("liquid_tank").select("*").order("id", { ascending: true }),
+            supabase.from("servo_status").select("*").order("id", { ascending: true }),
+            supabase.from("pump_status").select("*").order("id", { ascending: true }),
+            supabase.from("process_logs").select("*").order("id", { ascending: false }).limit(50)
+          ]);
+
+          if (errSys || errBins || errTank || errServos || errPumps || errLogs) {
+            throw new Error("One or more direct Supabase table queries failed.");
+          }
+
+          const resolvedSystem = system_status?.[0] || null;
+          const resolvedDustbins = dustbinsData || [];
+          const resolvedTank = liquid_tank?.[0] || null;
+          const resolvedServos = servo_status || [];
+          const resolvedPumps = pump_status || [];
+          const resolvedLogs = process_logs || [];
+
+          setSystemStatus(resolvedSystem);
+          setDustbins(resolvedDustbins);
+          setLiquidTank(resolvedTank);
+          setServos(resolvedServos);
+          setPumps(resolvedPumps);
+          setLogs(resolvedLogs);
+
+          // Sync local simulator states
+          if (resolvedSystem) {
+            setSimStage(resolvedSystem.current_stage);
+            setSimEspStatus(resolvedSystem.esp32_status);
+            setSimLcdMsg(resolvedSystem.lcd_message);
+            setSimBuzzer(resolvedSystem.buzzer_status);
+          }
+          if (resolvedDustbins[0]) setSimBin1Val(resolvedDustbins[0].fill_percentage);
+          if (resolvedDustbins[1]) setSimBin2Val(resolvedDustbins[1].fill_percentage);
+          if (resolvedTank) setSimTankVal(resolvedTank.fill_percentage);
+          
+          const angles: Record<number, number> = {};
+          resolvedServos.forEach((s: ServoStatusRow) => {
+            angles[s.id] = s.angle;
+          });
+          setSimServoAngles(prev => ({ ...prev, ...angles }));
+
+          const pStates: Record<number, string> = {};
+          resolvedPumps.forEach((p: PumpStatusRow) => {
+            pStates[p.id] = p.status;
+          });
+          setSimPumpStates(prev => ({ ...prev, ...pStates }));
+
+          setActiveMode("supabase_direct");
+          setError(null);
+          return;
+        } catch (subErr: any) {
+          console.warn("Direct Supabase query fallback failed:", subErr.message);
+        }
+      }
+      
+      // Fallback 3: Local Interactive Demo Sandbox Mode (Vercel with no variables yet)
+      console.log("Activating client-side sandbox demo simulation mode.");
+      setActiveMode("local_simulation");
+      setError(null); // Keep dashboard fully unlocked and interactive
     } finally {
       if (!silent) setLoading(false);
     }
   };
 
-  // Write individual state updates back to Supabase securely via bypass routes
+  // Write individual state updates back to Supabase securely via bypass routes or local memory
   const handleUpdateDatabaseValue = async (table: string, id: number | null, payload: any, successMsg: string) => {
-    try {
-      const res = await fetch("/api/supabase/update-iot-data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table, id, payload })
-      });
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.success) {
-        showToast(successMsg, "success");
-        // Refetch immediately to sync local state
-        fetchAllIotData(true);
-      } else {
-        throw new Error(data?.error || "Backend database write transaction rejected.");
+    // Mode A: Express backend server active
+    if (activeMode === "backend") {
+      try {
+        const res = await fetch("/api/supabase/update-iot-data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table, id, payload })
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          showToast(successMsg, "success");
+          fetchAllIotData(true);
+        } else {
+          throw new Error(data?.error || "Backend database write transaction rejected.");
+        }
+      } catch (err: any) {
+        showToast(`Database Write Blocked: ${err.message}`, "error");
       }
-    } catch (err: any) {
-      showToast(`Database Write Blocked: ${err.message}`, "error");
+    } 
+    // Mode B: Direct Supabase SDK client active
+    else if (activeMode === "supabase_direct" && supabase) {
+      try {
+        let query;
+        if (id !== null) {
+          query = supabase.from(table).update(payload).eq("id", id);
+        } else {
+          query = supabase.from(table).insert([payload]);
+        }
+        const { error: writeErr } = await query;
+        if (writeErr) throw writeErr;
+        
+        showToast(successMsg, "success");
+        fetchAllIotData(true);
+      } catch (err: any) {
+        showToast(`Direct Write Failed: ${err.message}`, "error");
+      }
+    } 
+    // Mode C: Pure client-side in-memory sandbox (e.g. Vercel playground)
+    else {
+      try {
+        if (table === "system_status") {
+          setSystemStatus(prev => prev ? { ...prev, ...payload } : null);
+        } else if (table === "dustbins" && id !== null) {
+          setDustbins(prev => prev.map(bin => bin.id === id ? { ...bin, ...payload } : bin));
+        } else if (table === "liquid_tank") {
+          setLiquidTank(prev => prev ? { ...prev, ...payload } : null);
+        } else if (table === "servo_status" && id !== null) {
+          setServos(prev => prev.map(servo => servo.id === id ? { ...servo, ...payload } : servo));
+        } else if (table === "pump_status" && id !== null) {
+          setPumps(prev => prev.map(pump => pump.id === id ? { ...pump, ...payload } : pump));
+        } else if (table === "process_logs") {
+          const newLog: ProcessLogRow = {
+            id: Date.now(),
+            process_stage: payload.process_stage || "Manual Override",
+            description: payload.description,
+            created_at: new Date().toISOString()
+          };
+          setLogs(prev => [newLog, ...prev]);
+        }
+        showToast(`${successMsg} (Local Sandbox)`, "success");
+      } catch (err: any) {
+        showToast(`Local Update Error: ${err.message}`, "error");
+      }
     }
   };
 
@@ -206,33 +353,40 @@ export default function App() {
   useEffect(() => {
     fetchAllIotData();
 
-    if (!isSupabaseConfigured || !supabase) {
-      console.warn("Client-side direct Supabase keys missing. Falling back to poll fetch.");
-      const interval = setInterval(() => fetchAllIotData(true), 4000);
-      return () => clearInterval(interval);
+    // Set up a background polling interval to synchronize with hardware node writes
+    const interval = setInterval(() => {
+      if (activeMode !== "local_simulation" && activeMode !== "initializing") {
+        fetchAllIotData(true);
+      }
+    }, 6000);
+
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      console.log("Setting up Supabase Realtime channel for instant database sync...");
+      channel = supabase
+        .channel("supabase-realtime-iot-changes")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public" },
+          (payload) => {
+            console.log("⚡ Supabase Postgres Realtime event received:", payload);
+            fetchAllIotData(true);
+          }
+        )
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED" && activeMode === "supabase_direct") {
+            showToast("Instant Supabase real-time sync active!", "info");
+          }
+        });
     }
 
-    console.log("Setting up Supabase Realtime channel for instant database sync...");
-    const channel = supabase
-      .channel("supabase-realtime-iot-changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public" },
-        (payload) => {
-          console.log("⚡ Supabase Postgres Realtime event received:", payload);
-          fetchAllIotData(true);
-        }
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          showToast("Instant Supabase real-time sync active!", "info");
-        }
-      });
-
     return () => {
-      supabase.removeChannel(channel);
+      clearInterval(interval);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
-  }, []);
+  }, [activeMode]);
 
   // Quick Action: Run full automated demonstration cycle simulating the process step-by-step
   const handleRunFullSequenceDemo = async () => {
@@ -873,10 +1027,21 @@ export default function App() {
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="inline-block px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] text-emerald-400 uppercase font-black tracking-widest mb-3 mx-auto"
+          className={`inline-block px-3 py-1 rounded-full text-[10px] uppercase font-black tracking-widest mb-3 mx-auto ${
+            activeMode === "backend" 
+              ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+              : activeMode === "supabase_direct"
+              ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+              : "bg-amber-500/10 border border-amber-500/20 text-amber-400"
+          }`}
         >
-          <span className="pulse-led inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-2"></span>
-          Direct Live Supabase Integration
+          <span className={`pulse-led inline-block w-1.5 h-1.5 rounded-full mr-2 ${
+            activeMode === "backend" ? "bg-emerald-500" : activeMode === "supabase_direct" ? "bg-cyan-400" : "bg-amber-500 animate-pulse"
+          }`}></span>
+          {activeMode === "backend" && "Direct Live Supabase Backend Connected"}
+          {activeMode === "supabase_direct" && "Direct Client-Side Supabase Active"}
+          {activeMode === "local_simulation" && "Vercel Sandbox Demonstration Active"}
+          {activeMode === "initializing" && "Syncing Connection Mode..."}
         </motion.div>
 
         <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight uppercase text-white leading-tight">
